@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budget Tracker — Free Template</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet" />
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+
+const MONTHS = ["January","February","March","April","May","June","July",
+                "August","September","October","November","December"];
+
+const CURRENCIES = [
+  { code: "EUR", symbol: "€", locale: "de-DE" },
+  { code: "USD", symbol: "$", locale: "en-US" },
+  { code: "GBP", symbol: "£", locale: "en-GB" },
+  { code: "PLN", symbol: "zł", locale: "pl-PL" },
+  { code: "CHF", symbol: "CHF", locale: "de-CH" },
+  { code: "SEK", symbol: "kr", locale: "sv-SE" },
+  { code: "NOK", symbol: "kr", locale: "nb-NO" },
+  { code: "CZK", symbol: "Kč", locale: "cs-CZ" },
+  { code: "RON", symbol: "lei", locale: "ro-RO" },
+];
+
+const DEFAULT_CURRENCY = "EUR";
+
+// ── DEFAULT CATEGORIES ────────────────────────────────────────────────────────
+
+const DEFAULT_EXPENSE_CATEGORIES = [
+  { name: "Housing / Rent",       fixed: true  },
+  { name: "Utilities",            fixed: true  },
+  { name: "Health Insurance",     fixed: true  },
+  { name: "Phone",                fixed: true  },
+  { name: "Subscriptions",        fixed: true  },
+  { name: "Emergency Fund",       fixed: true  },
+  { name: "Groceries",            fixed: false },
+  { name: "Dining Out",           fixed: false },
+  { name: "Transportation",       fixed: false },
+  { name: "Personal Care",        fixed: false },
+  { name: "Clothing",             fixed: false },
+  { name: "Entertainment",        fixed: false },
+  { name: "Travel",               fixed: false },
+  { name: "Kids & Education",     fixed: false },
+  { name: "Healthcare Extra",     fixed: false },
+  { name: "Gifts",                fixed: false },
+  { name: "Investments / ETF",    fixed: false },
+  { name: "Other",                fixed: false },
+];
+
+const DEFAULT_INCOME_CATEGORIES = [
+  "Primary Salary",
+  "Secondary Salary",
+  "Freelance / Side Income",
+  "Bonuses",
+  "Benefits / Allowances",
+  "Other Income",
+];
+
+const DEFAULT_PLANNED_EXP = {
+  "Housing / Rent": 0, "Utilities": 0, "Health Insurance": 0,
+  "Phone": 0, "Subscriptions": 0, "Emergency Fund": 0,
+  "Groceries": 0, "Dining Out": 0, "Transportation": 0,
+  "Personal Care": 0, "Clothing": 0, "Entertainment": 0,
+  "Travel": 0, "Kids & Education": 0, "Healthcare Extra": 0,
+  "Gifts": 0, "Investments / ETF": 0, "Other": 0,
+};
+
+const DEFAULT_PLANNED_INC = {
+  "Primary Salary": 0, "Secondary Salary": 0,
+  "Freelance / Side Income": 0, "Bonuses": 0,
+  "Benefits / Allowances": 0, "Other Income": 0,
+};
+
+const DEFAULT_START_BALANCES = Array(12).fill(0);
+
+// ── STORAGE ───────────────────────────────────────────────────────────────────
+
+const MYK = "budget_tracker_free_v1";
+
+const DEFAULT_STORE = {
+  transactions: [],
+  expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
+  incomeCategories: DEFAULT_INCOME_CATEGORIES,
+  plannedExp: DEFAULT_PLANNED_EXP,
+  plannedInc: DEFAULT_PLANNED_INC,
+  startBalances: DEFAULT_START_BALANCES,
+};
+
+function loadMultiYear() {
+  try { const r = localStorage.getItem(MYK); if (r) return JSON.parse(r); } catch {}
+  return null;
+}
+function saveMultiYear(d) {
+  try { localStorage.setItem(MYK, JSON.stringify(d)); } catch {}
+}
+
+function makeEmptyYearStore(fromStore) {
+  return {
+    transactions: [],
+    expenseCategories: fromStore.expenseCategories.map(c => ({ ...c })),
+    incomeCategories: [...fromStore.incomeCategories],
+    plannedExp: { ...fromStore.plannedExp },
+    plannedInc: { ...fromStore.plannedInc },
+    startBalances: Array(12).fill(0),
+  };
+}
+
+function initMultiYear() {
+  const saved = loadMultiYear();
+  if (saved && saved.years) return saved;
+  const year = new Date().getFullYear();
+  return { activeYear: year, years: { [year]: DEFAULT_STORE }, currency: DEFAULT_CURRENCY };
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+
+function makeFmt(currencyCode) {
+  const cur = CURRENCIES.find(c => c.code === currencyCode) || CURRENCIES[0];
+  return n => {
+    const abs = Math.abs(n);
+    const formatted = abs.toLocaleString(cur.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return cur.symbol + formatted;
+  };
+}
+
+const gm = d => new Date(d).getMonth();
+const gy = d => new Date(d).getFullYear();
+const sumA = (arr, f) => arr.reduce((s, t) => s + (t[f] || 0), 0);
+
+function calcSummary(txs, mi, store, year) {
+  const mt  = txs.filter(t => gm(t.date) === mi && gy(t.date) === year);
+  const exp = mt.filter(t => t.type === "expense");
+  const inc = mt.filter(t => t.type === "income");
+  const aInc = sumA(inc, "amount"), aExp = sumA(exp, "amount");
+  const ot = sumA(exp.filter(t => t.oneTime), "amount");
+  const ec = {};
+  exp.forEach(t => { ec[t.category] = (ec[t.category] || 0) + t.amount; });
+  const fixedSet = new Set(store.expenseCategories.filter(c => c.fixed).map(c => c.name));
+  const fixed = Object.entries(ec).filter(([c]) => fixedSet.has(c)).reduce((s, [, v]) => s + v, 0);
+  const half = aInc / 2, saved = aInc - aExp;
+  const plExpTotal = Object.values(store.plannedExp).reduce((s, v) => s + v, 0);
+  const plIncTotal = Object.values(store.plannedInc).reduce((s, v) => s + v, 0);
+  return {
+    aInc, aExp, ot, saved, ec, fixed, fixedSet,
+    startBal: store.startBalances[mi],
+    endBal: store.startBalances[mi] + saved,
+    dist: { half, fixed, flex: half - fixed, inv: half / 2, sav: half / 4 },
+    plExp: store.plannedExp, plExpTotal, plIncTotal,
+  };
+}
+
+// ── CHART COMPONENTS ──────────────────────────────────────────────────────────
+
+const CHART_COLORS = ["#6366f1","#8b5cf6","#06b6d4","#14b8a6","#f59e0b","#f97316","#ef4444","#a78bfa","#84cc16","#ec4899"];
+
+const ChartWrap = ({ h, children }) => (
+  <div style={{ position: "relative", height: h }}>{children}</div>
+);
+
+function MonthlyBarChart({ data, fmt }) {
+  const ref = useRef(null), ch = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (ch.current) ch.current.destroy();
+    ch.current = new Chart(ref.current, {
+      type: "bar",
+      data: {
+        labels: data.map(d => d.name),
+        datasets: [
+          { label: "Income",   data: data.map(d => d.income),  backgroundColor: "#6366f1", borderRadius: 3 },
+          { label: "Expenses", data: data.map(d => d.expense), backgroundColor: "#f43f5e", borderRadius: 3 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom", labels: { font: { size: 10 }, boxWidth: 8, padding: 4 } } },
+        scales: {
+          y: { ticks: { callback: v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v, font: { size: 9 } }, grid: { color: "#f1f5f9" } },
+          x: { ticks: { font: { size: 9 } }, grid: { display: false } }
+        }
+      }
+    });
+    return () => { if (ch.current) ch.current.destroy(); };
+  }, [JSON.stringify(data)]);
+  return <ChartWrap h="160px"><canvas ref={ref} /></ChartWrap>;
+}
+
+function MonthCompareChart({ aInc, aExp, plInc, plExp }) {
+  const ref = useRef(null), ch = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (ch.current) ch.current.destroy();
+    ch.current = new Chart(ref.current, {
+      type: "bar",
+      data: {
+        labels: ["Income", "Expenses"],
+        datasets: [
+          { label: "Actual",  data: [aInc, aExp],  backgroundColor: ["rgba(16,185,129,0.9)", "rgba(244,63,94,0.9)"],  borderRadius: 3 },
+          { label: "Planned", data: [plInc, plExp], backgroundColor: ["rgba(16,185,129,0.2)", "rgba(244,63,94,0.2)"], borderRadius: 3 },
+        ]
+      },
+      options: {
+        indexAxis: "y", responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom", labels: { font: { size: 10 }, boxWidth: 8, padding: 4 } } },
+        scales: {
+          x: { ticks: { callback: v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v, font: { size: 9 } }, grid: { color: "#f1f5f9" } },
+          y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+        }
+      }
+    });
+    return () => { if (ch.current) ch.current.destroy(); };
+  }, [aInc, aExp, plInc, plExp]);
+  return <ChartWrap h="120px"><canvas ref={ref} /></ChartWrap>;
+}
+
+function DoughnutComp({ data, h = "160px" }) {
+  const ref = useRef(null), ch = useRef(null);
+  useEffect(() => {
+    if (!ref.current || !data.length) return;
+    if (ch.current) ch.current.destroy();
+    ch.current = new Chart(ref.current, {
+      type: "doughnut",
+      data: {
+        labels: data.map(d => d.name.split(" ")[0]),
+        datasets: [{ data: data.map(d => d.value), backgroundColor: CHART_COLORS, borderWidth: 2, borderColor: "#fff" }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: "right", labels: { font: { size: 9 }, boxWidth: 9, padding: 4 } } }
+      }
+    });
+    return () => { if (ch.current) ch.current.destroy(); };
+  }, [JSON.stringify(data)]);
+  return <ChartWrap h={h}><canvas ref={ref} /></ChartWrap>;
+}
+
+function LineChartComp({ data }) {
+  const ref = useRef(null), ch = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (ch.current) ch.current.destroy();
+    ch.current = new Chart(ref.current, {
+      type: "line",
+      data: {
+        labels: data.map(d => d.name),
+        datasets: [{
+          label: "Saved", data: data.map(d => d.saved),
+          borderColor: "#6366f1", backgroundColor: "rgba(99,102,241,0.1)",
+          fill: true, tension: 0.4, pointRadius: 3, pointBackgroundColor: "#6366f1"
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { ticks: { callback: v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v, font: { size: 9 } }, grid: { color: "#f1f5f9" } },
+          x: { ticks: { font: { size: 9 } }, grid: { display: false } }
+        }
+      }
+    });
+    return () => { if (ch.current) ch.current.destroy(); };
+  }, [JSON.stringify(data)]);
+  return <ChartWrap h="140px"><canvas ref={ref} /></ChartWrap>;
+}
+
+// ── SMALL COMPONENTS ──────────────────────────────────────────────────────────
+
+function Card({ label, value, sub, vc = "text-gray-900" }) {
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      <p className={`text-xl font-bold ${vc}`}>{value}</p>
+      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+function Dist({ d, fmt }) {
+  return (
+    <div className="rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50 p-4">
+      <p className="text-sm font-semibold text-indigo-700 mb-1">💡 Income Allocation Guide</p>
+      <p className="text-xs text-indigo-400 mb-3">Suggested targets based on your income — not actuals.</p>
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          { label: "Working capital (50%)", val: d.half,  note: "half your income to allocate" },
+          { label: "Fixed costs",           val: d.fixed, note: "rent, utilities, subscriptions", warn: d.fixed > d.half },
+          { label: "Flex buffer",           val: d.flex,  note: "working capital minus fixed",    warn: d.flex < 0 },
+          { label: "Invest target (25%)",   val: d.inv,   note: "savings, ETF, pension" },
+          { label: "Personal target (12.5%)",val: d.sav,  note: "personal & discretionary spending" },
+          { label: "Reserve target (12.5%)", val: d.sav,  note: "emergency fund top-up" },
+        ].map(({ label, val, note, warn }) => (
+          <div key={label} className={`rounded-xl p-2.5 ${warn ? "bg-red-50 border border-red-200" : "bg-white border border-indigo-100"}`}>
+            <p className="text-xs text-gray-500 leading-tight">{label}</p>
+            <p className={`font-bold text-sm mt-0.5 ${warn ? "text-red-500" : "text-indigo-700"}`}>{fmt(val)}</p>
+            <p className="text-xs text-gray-400 leading-tight mt-0.5">{note}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TxRow({ t, onEdit, onDelete, fmt }) {
+  return (
+    <div className="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0 cursor-pointer group" onClick={() => onEdit(t)}>
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0 ${t.type === "income" ? "bg-emerald-100 text-emerald-600" : "bg-red-50 text-red-400"}`}>
+        {t.type === "income" ? "↑" : "↓"}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1 flex-wrap">
+          <p className="text-sm text-gray-800 truncate">{t.description}</p>
+          {t.oneTime && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">★ one-time</span>}
+        </div>
+        <p className="text-xs text-gray-400">{t.category} · {t.date.slice(5)}</p>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <p className={`text-sm font-semibold ${t.type === "income" ? "text-emerald-600" : "text-gray-800"}`}>
+          {t.type === "income" ? "+" : "-"}{fmt(t.amount)}
+        </p>
+        <button onClick={e => { e.stopPropagation(); onDelete(t.id); }} className="text-gray-300 hover:text-red-400 text-lg w-5 leading-none opacity-0 group-hover:opacity-100">×</button>
+      </div>
+    </div>
+  );
+}
+
+function CatRow({ name, planned, actual, fixed, fmt }) {
+  const diff = planned - actual, over = diff < 0;
+  const pct = planned > 0 ? Math.min(100, (actual / planned) * 100) : actual > 0 ? 100 : 0;
+  return (
+    <div className="flex items-center gap-2 py-2 border-b border-gray-50 last:border-0">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 mb-1">
+          <p className="text-sm text-gray-700 truncate">{name}</p>
+          {fixed && <span className="text-xs text-indigo-400 font-medium">Fixed</span>}
+        </div>
+        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full ${over ? "bg-red-400" : "bg-indigo-400"}`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <div className="text-right flex-shrink-0 w-28">
+        <p className="text-sm font-medium text-gray-800">{fmt(actual)}</p>
+        {planned > 0 && <p className={`text-xs ${over ? "text-red-500" : "text-emerald-600"}`}>{over ? "−" : "+"}{fmt(Math.abs(diff))}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ── TX MODAL ──────────────────────────────────────────────────────────────────
+
+function TxModal({ onSave, onDelete, onClose, monthIdx, editTx, expCats, incCats, activeYear }) {
+  const pad = String(monthIdx + 1).padStart(2, "0");
+  const [f, setF] = useState(editTx ? { ...editTx } : {
+    date: `${activeYear}-${pad}-01`, amount: "", description: "",
+    category: expCats[0]?.name || "Groceries", type: "expense", oneTime: false,
+  });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const cats = f.type === "expense" ? expCats.map(c => c.name) : incCats;
+  const submit = e => {
+    e.preventDefault();
+    if (!f.amount || !f.description) return;
+    onSave({ ...f, amount: parseFloat(f.amount), id: editTx ? editTx.id : Date.now() });
+    onClose();
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-4" style={{ background: "rgba(0,0,0,0.4)" }}>
+      <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-semibold text-gray-800">{editTx ? "Edit" : "Add"} Transaction</h3>
+          <button onClick={onClose} className="text-2xl text-gray-300 leading-none">×</button>
+        </div>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="flex gap-2">
+            {["expense", "income"].map(tp => (
+              <button key={tp} type="button"
+                onClick={() => { set("type", tp); set("category", tp === "expense" ? (expCats[0]?.name || "") : (incCats[0] || "")); }}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium ${f.type === tp ? (tp === "expense" ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700") : "bg-gray-100 text-gray-500"}`}>
+                {tp === "expense" ? "Expense" : "Income"}
+              </button>
+            ))}
+          </div>
+          <input type="date" value={f.date} onChange={e => set("date", e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm" />
+          <input type="number" step="0.01" placeholder="Amount" value={f.amount} onChange={e => set("amount", e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm" />
+          <input placeholder="Description" value={f.description} onChange={e => set("description", e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm" />
+          <select value={f.category} onChange={e => set("category", e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
+            {cats.map(c => <option key={c}>{c}</option>)}
+          </select>
+          {f.type === "expense" && (
+            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <input type="checkbox" checked={f.oneTime} onChange={e => set("oneTime", e.target.checked)} />
+              Flag as one-time expense (won't distort averages)
+            </label>
+          )}
+          <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-semibold text-sm">{editTx ? "Save Changes" : "Add"}</button>
+          {editTx && <button type="button" onClick={() => { onDelete(editTx.id); onClose(); }} className="w-full border border-red-200 text-red-500 py-2.5 rounded-xl text-sm">Delete Transaction</button>}
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── SETTINGS VIEW ─────────────────────────────────────────────────────────────
+
+function SettingsView({ store, updateStore, currency, setCurrency }) {
+  const [tab, setTab] = useState("categories");
+  const [newExpCat, setNewExpCat] = useState("");
+  const [newIncCat, setNewIncCat] = useState("");
+  const [editingCat, setEditingCat] = useState(null);
+  const tabs = [["categories", "Categories"], ["planned", "Planned Budget"], ["balances", "Balances"], ["currency", "Currency"]];
+
+  const addExpCat = () => {
+    if (!newExpCat.trim()) return;
+    updateStore(s => ({ ...s, expenseCategories: [...s.expenseCategories, { name: newExpCat.trim(), fixed: false }], plannedExp: { ...s.plannedExp, [newExpCat.trim()]: 0 } }));
+    setNewExpCat("");
+  };
+  const addIncCat = () => {
+    if (!newIncCat.trim()) return;
+    updateStore(s => ({ ...s, incomeCategories: [...s.incomeCategories, newIncCat.trim()], plannedInc: { ...s.plannedInc, [newIncCat.trim()]: 0 } }));
+    setNewIncCat("");
+  };
+  const delExpCat = idx => updateStore(s => ({ ...s, expenseCategories: s.expenseCategories.filter((_, i) => i !== idx) }));
+  const delIncCat = idx => updateStore(s => ({ ...s, incomeCategories: s.incomeCategories.filter((_, i) => i !== idx) }));
+  const toggleFixed = idx => updateStore(s => ({ ...s, expenseCategories: s.expenseCategories.map((c, i) => i === idx ? { ...c, fixed: !c.fixed } : c) }));
+  const renameExpCat = (idx, newName) => {
+    if (!newName.trim()) return;
+    updateStore(s => {
+      const old = s.expenseCategories[idx].name;
+      const cats = s.expenseCategories.map((c, i) => i === idx ? { ...c, name: newName.trim() } : c);
+      const pe = { ...s.plannedExp };
+      if (old !== newName.trim()) { pe[newName.trim()] = pe[old] || 0; delete pe[old]; }
+      const txs = s.transactions.map(t => t.category === old ? { ...t, category: newName.trim() } : t);
+      return { ...s, expenseCategories: cats, plannedExp: pe, transactions: txs };
+    });
+  };
+  const renameIncCat = (idx, newName) => {
+    if (!newName.trim()) return;
+    updateStore(s => {
+      const old = s.incomeCategories[idx];
+      const cats = s.incomeCategories.map((c, i) => i === idx ? newName.trim() : c);
+      const pi = { ...s.plannedInc };
+      if (old !== newName.trim()) { pi[newName.trim()] = pi[old] || 0; delete pi[old]; }
+      const txs = s.transactions.map(t => t.category === old ? { ...t, category: newName.trim() } : t);
+      return { ...s, incomeCategories: cats, plannedInc: pi, transactions: txs };
+    });
+  };
+  const setPlannedExp = (cat, val) => updateStore(s => ({ ...s, plannedExp: { ...s.plannedExp, [cat]: parseFloat(val) || 0 } }));
+  const setPlannedInc = (cat, val) => updateStore(s => ({ ...s, plannedInc: { ...s.plannedInc, [cat]: parseFloat(val) || 0 } }));
+  const setBalance = (mi, val) => updateStore(s => {
+    const nb = [...s.startBalances]; nb[mi] = parseFloat(val) || 0;
+    return { ...s, startBalances: nb };
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl overflow-x-auto">
+        {tabs.map(([v, l]) => (
+          <button key={v} onClick={() => setTab(v)} className={`flex-1 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${tab === v ? "bg-white text-indigo-700 shadow-sm" : "text-gray-500"}`}>{l}</button>
+        ))}
+      </div>
+
+      {tab === "currency" && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <p className="text-sm font-semibold text-gray-700 mb-1">Currency</p>
+          <p className="text-xs text-gray-400 mb-4">Changes how amounts are displayed everywhere. Does not convert values.</p>
+          <div className="grid grid-cols-3 gap-2">
+            {CURRENCIES.map(c => (
+              <button key={c.code} onClick={() => setCurrency(c.code)}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${currency === c.code ? "border-indigo-400 bg-indigo-50 text-indigo-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                <span className="text-base">{c.symbol}</span>
+                <span>{c.code}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "categories" && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Expense Categories</p>
+            <p className="text-xs text-gray-400 mb-3">Click a name to rename · "Fixed" = recurring fixed costs (rent, etc.)</p>
+            {store.expenseCategories.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 py-2 border-b border-gray-50 last:border-0">
+                {editingCat?.type === "exp" && editingCat.index === i ? (
+                  <input autoFocus defaultValue={c.name} className="flex-1 text-sm border border-indigo-300 rounded-lg px-2 py-1"
+                    onBlur={e => { renameExpCat(i, e.target.value); setEditingCat(null); }}
+                    onKeyDown={e => { if (e.key === "Enter") { renameExpCat(i, e.target.value); setEditingCat(null); } if (e.key === "Escape") setEditingCat(null); }} />
+                ) : (
+                  <p className="flex-1 text-sm text-gray-700 cursor-pointer hover:text-indigo-600 truncate" onClick={() => setEditingCat({ type: "exp", index: i })}>{c.name}</p>
+                )}
+                <button onClick={() => toggleFixed(i)} className={`text-xs px-2 py-0.5 rounded font-medium ${c.fixed ? "bg-indigo-100 text-indigo-600" : "bg-gray-100 text-gray-400"}`}>Fixed</button>
+                <button onClick={() => delExpCat(i)} className="text-gray-300 hover:text-red-400 text-lg leading-none w-5">×</button>
+              </div>
+            ))}
+            <div className="flex gap-2 mt-3">
+              <input placeholder="New category name" value={newExpCat} onChange={e => setNewExpCat(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && addExpCat()}
+                className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2" />
+              <button onClick={addExpCat} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-medium">Add</button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-3">Income Categories</p>
+            {store.incomeCategories.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 py-2 border-b border-gray-50 last:border-0">
+                {editingCat?.type === "inc" && editingCat.index === i ? (
+                  <input autoFocus defaultValue={c} className="flex-1 text-sm border border-indigo-300 rounded-lg px-2 py-1"
+                    onBlur={e => { renameIncCat(i, e.target.value); setEditingCat(null); }}
+                    onKeyDown={e => { if (e.key === "Enter") { renameIncCat(i, e.target.value); setEditingCat(null); } if (e.key === "Escape") setEditingCat(null); }} />
+                ) : (
+                  <p className="flex-1 text-sm text-gray-700 cursor-pointer hover:text-indigo-600" onClick={() => setEditingCat({ type: "inc", index: i })}>{c}</p>
+                )}
+                <button onClick={() => delIncCat(i)} className="text-gray-300 hover:text-red-400 text-lg leading-none w-5">×</button>
+              </div>
+            ))}
+            <div className="flex gap-2 mt-3">
+              <input placeholder="New income category" value={newIncCat} onChange={e => setNewIncCat(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && addIncCat()}
+                className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2" />
+              <button onClick={addIncCat} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-medium">Add</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === "planned" && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Planned Expenses (monthly)</p>
+            <p className="text-xs text-gray-400 mb-3">Set your monthly budget targets per category.</p>
+            {store.expenseCategories.map(c => (
+              <div key={c.name} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <p className="text-sm text-gray-700 truncate">{c.name}</p>
+                  {c.fixed && <span className="text-xs text-indigo-400">Fixed</span>}
+                </div>
+                <input type="number" step="0.01" defaultValue={store.plannedExp[c.name] || 0}
+                  onBlur={e => setPlannedExp(c.name, e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && e.target.blur()}
+                  className="w-28 text-sm text-right border border-gray-200 rounded-lg px-2 py-1" />
+              </div>
+            ))}
+          </div>
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-3">Planned Income (monthly)</p>
+            {store.incomeCategories.map(c => (
+              <div key={c} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
+                <p className="flex-1 text-sm text-gray-700 truncate">{c}</p>
+                <input type="number" step="0.01" defaultValue={store.plannedInc[c] || 0}
+                  onBlur={e => setPlannedInc(c, e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && e.target.blur()}
+                  className="w-28 text-sm text-right border border-gray-200 rounded-lg px-2 py-1" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "balances" && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <p className="text-sm font-semibold text-gray-700 mb-1">Starting Balances</p>
+          <p className="text-xs text-gray-400 mb-3">Your account balance at the start of each month.</p>
+          {MONTHS.map((m, i) => (
+            <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
+              <p className="text-sm text-gray-700 w-28">{m}</p>
+              <input type="number" step="0.01" defaultValue={store.startBalances[i]}
+                onBlur={e => setBalance(i, e.target.value)}
+                onKeyDown={e => e.key === "Enter" && e.target.blur()}
+                className="flex-1 text-sm text-right border border-gray-200 rounded-lg px-2 py-1" />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── WELCOME SCREEN ────────────────────────────────────────────────────────────
+
+function WelcomeScreen({ onDismiss }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)" }}>
+      <div className="bg-white rounded-3xl w-full max-w-md p-7 shadow-2xl">
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-3 text-3xl">📊</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-1">Budget Tracker</h2>
+          <p className="text-sm text-gray-500">A free, offline-first personal finance tracker.<br />All data stays in your browser.</p>
+        </div>
+        <div className="space-y-3 mb-6">
+          {[
+            { icon: "📅", title: "Monthly & yearly views", desc: "Track income vs. expenses month by month, with YTD summaries and savings trends." },
+            { icon: "🏷️", title: "Fully customizable", desc: "Rename categories, set planned budgets, flag one-time expenses. Make it yours." },
+            { icon: "📤", title: "Backup & restore", desc: "Export your data as JSON anytime. Import it back on any device." },
+            { icon: "🔒", title: "100% offline", desc: "No server, no login, no tracking. Your data never leaves your browser." },
+          ].map(({ icon, title, desc }) => (
+            <div key={title} className="flex gap-3 items-start">
+              <span className="text-xl mt-0.5">{icon}</span>
+              <div>
+                <p className="text-sm font-semibold text-gray-800">{title}</p>
+                <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={onDismiss} className="w-full bg-indigo-600 text-white py-3 rounded-2xl font-semibold text-sm hover:bg-indigo-700 transition-colors">
+          Get Started →
+        </button>
+        <p className="text-center text-xs text-gray-400 mt-3">
+          Built with React + Chart.js · Free to use and share
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── MONTH VIEW ────────────────────────────────────────────────────────────────
+
+function MonthView({ mi, store, updateStore, onEdit, activeYear, fmt }) {
+  const [tab, setTab] = useState("summary");
+  const [fil, setFil] = useState("all");
+  const { transactions, expenseCategories } = store;
+  const s = useMemo(() => calcSummary(transactions, mi, store, activeYear), [transactions, mi, store, activeYear]);
+  const mTx = transactions.filter(t => gm(t.date) === mi && gy(t.date) === activeYear).sort((a, b) => b.date.localeCompare(a.date));
+  const fTx = ({ all: mTx, expense: mTx.filter(t => t.type === "expense"), income: mTx.filter(t => t.type === "income"), onetime: mTx.filter(t => t.oneTime) })[fil] || mTx;
+  const delTx = id => updateStore(s => ({ ...s, transactions: s.transactions.filter(t => t.id !== id) }));
+  const hasData = mTx.length > 0;
+  const donutData = expenseCategories.map(c => ({ name: c.name, value: s.ec[c.name] || 0 })).filter(d => d.value > 0).sort((a, b) => b.value - a.value).slice(0, 8);
+  const varTot = Math.max(0, s.aExp - s.fixed);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4" style={{ gridTemplateColumns: "300px 1fr" }}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Card label="Income"   value={fmt(s.aInc)} sub={`Plan ${fmt(s.plIncTotal)}`} vc="text-emerald-600" />
+            <Card label="Expenses" value={fmt(s.aExp)} sub={`Plan ${fmt(s.plExpTotal)}`} />
+            <Card label="Saved"    value={fmt(s.saved)} vc={s.saved >= 0 ? "text-indigo-600" : "text-red-500"} />
+            <Card label="One-time" value={fmt(s.ot)} vc="text-amber-600" sub={s.ot > 0 ? "flagged" : "none"} />
+          </div>
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-4">
+            <div><p className="text-xs text-gray-400">Start</p><p className="font-semibold text-gray-700 text-sm">{fmt(s.startBal)}</p></div>
+            <div className="flex-1 text-center text-gray-300 text-sm">——→</div>
+            <div className="text-right"><p className="text-xs text-gray-400">End</p><p className={`font-semibold text-sm ${s.endBal >= 0 ? "text-indigo-700" : "text-red-500"}`}>{fmt(s.endBal)}</p></div>
+          </div>
+        </div>
+
+        {hasData ? (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Income vs Expenses — Actual vs Planned</p>
+            <p className="text-xs text-gray-400 mb-3">Solid = actual · Light = planned budget</p>
+            <MonthCompareChart aInc={s.aInc} aExp={s.aExp} plInc={s.plIncTotal} plExp={s.plExpTotal} />
+          </div>
+        ) : (
+          <div className="bg-gray-50 rounded-2xl flex flex-col items-center justify-center text-center p-8 border-2 border-dashed border-gray-200">
+            <p className="text-gray-400 text-sm font-medium mb-1">No transactions yet</p>
+            <p className="text-gray-300 text-xs">Hit the + button to add your first entry</p>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        {donutData.length > 0 ? (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Spending by Category</p>
+            <p className="text-xs text-gray-400 mb-2">Where your money went this month</p>
+            <DoughnutComp data={donutData} h="160px" />
+          </div>
+        ) : <div />}
+
+        {hasData && s.aExp > 0 ? (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Fixed vs Flexible</p>
+            <p className="text-xs text-gray-400 mb-2">Fixed (recurring) vs discretionary spending</p>
+            <DoughnutComp data={[{ name: "Fixed", value: s.fixed }, { name: "Flexible", value: varTot }]} h="120px" />
+            <div className="space-y-2 mt-3">
+              {[{ label: "Fixed", val: s.fixed, color: "#6366f1" }, { label: "Flexible", val: varTot, color: "#8b5cf6" }].map(({ label, val, color }) => (
+                <div key={label}>
+                  <div className="flex justify-between text-xs mb-0.5">
+                    <span className="text-gray-500">{label}</span>
+                    <span className="font-medium text-gray-700">{fmt(val)} · {s.aExp > 0 ? Math.round(val / s.aExp * 100) : 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: s.aExp > 0 ? `${(val / s.aExp) * 100}%` : "0%", background: color }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : <div />}
+
+        {hasData && <Dist d={s.dist} fmt={fmt} />}
+      </div>
+
+      <div>
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl mb-4" style={{ width: "fit-content" }}>
+          {["summary", "transactions"].map(t => (
+            <button key={t} onClick={() => setTab(t)} className={`px-6 py-2 rounded-lg text-sm font-medium capitalize ${tab === t ? "bg-white text-indigo-700 shadow-sm" : "text-gray-500"}`}>{t}</button>
+          ))}
+        </div>
+
+        {tab === "summary" && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-3">Category Breakdown — Actual vs Planned</p>
+            {expenseCategories.some(({ name, fixed }) => s.ec[name] || s.plExp[name]) ? (
+              <div className="grid grid-cols-2 gap-x-8">
+                {expenseCategories.map(({ name, fixed }) => {
+                  const a = s.ec[name] || 0, p = s.plExp[name] || 0;
+                  if (!a && !p) return null;
+                  return <CatRow key={name} name={name} planned={p} actual={a} fixed={fixed} fmt={fmt} />;
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400 text-center py-4">No expenses yet this month</p>
+            )}
+          </div>
+        )}
+
+        {tab === "transactions" && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <div className="flex gap-1.5 mb-3 flex-wrap">
+              {[["all", "All"], ["expense", "Expenses"], ["income", "Income"], ["onetime", "One-time ★"]].map(([v, l]) => (
+                <button key={v} onClick={() => setFil(v)} className={`px-4 py-1.5 rounded-full text-xs font-medium ${fil === v ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-500"}`}>{l}</button>
+              ))}
+            </div>
+            {fTx.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-8">No transactions</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-x-6">
+                <div>{fTx.slice(0, Math.ceil(fTx.length / 2)).map(t => <TxRow key={t.id} t={t} onEdit={onEdit} onDelete={delTx} fmt={fmt} />)}</div>
+                <div>{fTx.slice(Math.ceil(fTx.length / 2)).map(t => <TxRow key={t.id} t={t} onEdit={onEdit} onDelete={delTx} fmt={fmt} />)}</div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── YEAR VIEW ─────────────────────────────────────────────────────────────────
+
+function YearView({ store, activeYear, fmt }) {
+  const { transactions, expenseCategories } = store;
+  const fixedSet = new Set(expenseCategories.filter(c => c.fixed).map(c => c.name));
+  const monthly = MONTHS.map((nm, m) => {
+    const mt = transactions.filter(t => gm(t.date) === m && gy(t.date) === activeYear);
+    return { name: nm.slice(0, 3), income: sumA(mt.filter(t => t.type === "income"), "amount"), expense: sumA(mt.filter(t => t.type === "expense"), "amount"), ot: sumA(mt.filter(t => t.oneTime), "amount"), saved: 0 };
+  }).map(m => ({ ...m, saved: m.income - m.expense }));
+  const yInc = monthly.reduce((s, m) => s + m.income, 0);
+  const yExp = monthly.reduce((s, m) => s + m.expense, 0);
+  const yOT  = monthly.reduce((s, m) => s + m.ot, 0);
+  const ct = {};
+  transactions.filter(t => t.type === "expense" && gy(t.date) === activeYear).forEach(t => { ct[t.category] = (ct[t.category] || 0) + t.amount; });
+  const pieData = Object.entries(ct).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, value]) => ({ name, value }));
+  const savingsTrend = monthly.filter(m => m.income > 0 || m.expense > 0);
+  const yFixed = transactions.filter(t => t.type === "expense" && gy(t.date) === activeYear && fixedSet.has(t.category)).reduce((s, t) => s + t.amount, 0);
+  const yFlex = Math.max(0, yExp - yFixed);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4" style={{ gridTemplateColumns: "300px 1fr" }}>
+        <div className="grid grid-cols-2 gap-3 content-start">
+          <Card label="YTD Income"     value={fmt(yInc)}       vc="text-emerald-600" />
+          <Card label="YTD Expenses"   value={fmt(yExp)} />
+          <Card label="YTD Saved"      value={fmt(yInc - yExp)} vc={(yInc - yExp) >= 0 ? "text-indigo-600" : "text-red-500"} />
+          <Card label="One-time Total" value={fmt(yOT)}         vc="text-amber-600" sub="flagged" />
+        </div>
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <p className="text-sm font-semibold text-gray-700 mb-1">Monthly Income vs Expenses</p>
+          <p className="text-xs text-gray-400 mb-3">Purple = income · Red = expenses</p>
+          <MonthlyBarChart data={monthly} fmt={fmt} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        {savingsTrend.length > 1 && (
+          <div className="col-span-2 bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Monthly Savings Trend</p>
+            <p className="text-xs text-gray-400 mb-3">Above zero = saved that month · Below = overspent</p>
+            <LineChartComp data={savingsTrend} />
+          </div>
+        )}
+        {yExp > 0 && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Fixed vs Flexible</p>
+            <p className="text-xs text-gray-400 mb-2">Full year breakdown</p>
+            <DoughnutComp data={[{ name: "Fixed", value: yFixed }, { name: "Flexible", value: yFlex }]} h="130px" />
+            <div className="space-y-2 mt-3">
+              {[{ label: "Fixed", val: yFixed, color: "#6366f1" }, { label: "Flexible", val: yFlex, color: "#8b5cf6" }].map(({ label, val, color }) => (
+                <div key={label}>
+                  <div className="flex justify-between text-xs mb-0.5">
+                    <span className="text-gray-500">{label}</span>
+                    <span className="font-medium text-gray-700">{fmt(val)} · {yExp > 0 ? Math.round(val / yExp * 100) : 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: yExp > 0 ? `${(val / yExp) * 100}%` : "0%", background: color }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {pieData.length > 0 && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <p className="text-sm font-semibold text-gray-700 mb-1">Spending by Category (YTD)</p>
+            <p className="text-xs text-gray-400 mb-2">Top 8 expense categories</p>
+            <DoughnutComp data={pieData} h="170px" />
+          </div>
+        )}
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <p className="text-sm font-semibold text-gray-700 mb-3">All Categories (YTD)</p>
+          {Object.keys(ct).length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-4">No expenses yet</p>
+          ) : (
+            Object.entries(ct).sort((a, b) => b[1] - a[1]).map(([cat, total], i) => {
+              const pct = yExp > 0 ? Math.round((total / yExp) * 100) : 0;
+              return (
+                <div key={cat} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                  <div className="flex items-center gap-1 flex-shrink-0" style={{ width: "160px" }}>
+                    <span className="text-xs text-gray-700 truncate">{cat}</span>
+                    {fixedSet.has(cat) && <span className="text-xs text-indigo-400">F</span>}
+                  </div>
+                  <div className="flex-1 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                  </div>
+                  <span className="text-xs text-gray-400 w-7 text-right flex-shrink-0">{pct}%</span>
+                  <span className="text-sm font-medium text-gray-800 w-20 text-right flex-shrink-0">{fmt(total)}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── COMPARE VIEW ──────────────────────────────────────────────────────────────
+
+function CompareBarChart({ labels, datasets }) {
+  const ref = useRef(null), ch = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (ch.current) ch.current.destroy();
+    ch.current = new Chart(ref.current, {
+      type: "bar", data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom", labels: { font: { size: 10 }, boxWidth: 10, padding: 6 } } },
+        scales: {
+          y: { ticks: { callback: v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v, font: { size: 9 } }, grid: { color: "#f1f5f9" } },
+          x: { ticks: { font: { size: 10 } }, grid: { display: false } }
+        }
+      }
+    });
+    return () => { if (ch.current) ch.current.destroy(); };
+  }, [JSON.stringify({ labels, datasets })]);
+  return <ChartWrap h="180px"><canvas ref={ref} /></ChartWrap>;
+}
+
+function CompareView({ multiYear, fmt }) {
+  const years = Object.keys(multiYear.years).map(Number).sort();
+  if (years.length < 2) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-8 text-center">
+        <p className="text-amber-700 font-semibold mb-1">Only one year of data so far</p>
+        <p className="text-amber-600 text-sm">Use the year switcher in the header to add another year. Once you have two years, this view will show year-over-year comparisons.</p>
+      </div>
+    );
+  }
+  const labels = years.map(String);
+  const yearlyData = years.map(y => {
+    const txs = multiYear.years[y].transactions;
+    const inc = sumA(txs.filter(t => t.type === "income"), "amount");
+    const exp = sumA(txs.filter(t => t.type === "expense"), "amount");
+    return { year: y, income: inc, expense: exp, saved: inc - exp };
+  });
+  const incExpDatasets = [
+    { label: "Income",   data: yearlyData.map(d => d.income),  backgroundColor: "#6366f1", borderRadius: 4 },
+    { label: "Expenses", data: yearlyData.map(d => d.expense), backgroundColor: "#f43f5e", borderRadius: 4 },
+    { label: "Saved",    data: yearlyData.map(d => d.saved),   backgroundColor: "#10b981", borderRadius: 4 },
+  ];
+  const pctChange = (cur, prev) => prev && prev !== 0 ? ((cur - prev) / Math.abs(prev) * 100).toFixed(1) : "—";
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        <div className="col-span-2 bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <p className="text-sm font-semibold text-gray-700 mb-1">Income vs Expenses vs Savings — Year Over Year</p>
+          <p className="text-xs text-gray-400 mb-3">Direct comparison across all tracked years</p>
+          <CompareBarChart labels={labels} datasets={incExpDatasets} />
+        </div>
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <p className="text-sm font-semibold text-gray-700 mb-3">Year Summary</p>
+          <table className="w-full text-xs">
+            <thead><tr className="border-b border-gray-100">
+              <th className="text-left text-gray-400 pb-2">Year</th>
+              <th className="text-right text-gray-400 pb-2">Income</th>
+              <th className="text-right text-gray-400 pb-2">Exp</th>
+              <th className="text-right text-gray-400 pb-2">Saved</th>
+            </tr></thead>
+            <tbody>
+              {yearlyData.map(d => (
+                <tr key={d.year} className="border-b border-gray-50 last:border-0">
+                  <td className="py-2 font-semibold text-gray-700">{d.year}</td>
+                  <td className="py-2 text-right text-emerald-600">{fmt(d.income)}</td>
+                  <td className="py-2 text-right text-gray-700">{fmt(d.expense)}</td>
+                  <td className={`py-2 text-right font-medium ${d.saved >= 0 ? "text-indigo-600" : "text-red-500"}`}>{fmt(d.saved)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {yearlyData.length > 1 && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <p className="text-xs text-gray-400 mb-2">Year-over-year expenses</p>
+              {yearlyData.slice(1).map((d, i) => {
+                const prev = yearlyData[i];
+                const chg = parseFloat(pctChange(d.expense, prev.expense));
+                return (
+                  <div key={d.year} className="flex justify-between text-xs py-1">
+                    <span className="text-gray-500">{prev.year} → {d.year}</span>
+                    <span className={`font-medium ${chg > 0 ? "text-red-500" : "text-emerald-600"}`}>{chg > 0 ? "+" : ""}{pctChange(d.expense, prev.expense)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ROOT ──────────────────────────────────────────────────────────────────────
+
+function App() {
+  const [multiYear, setMultiYear] = useState(() => initMultiYear());
+  const [month, setMonth] = useState(new Date().getMonth());
+  const [view, setView] = useState("month");
+  const [showPicker, setShowPicker] = useState(false);
+  const [showYearMgr, setShowYearMgr] = useState(false);
+  const [txModal, setTxModal] = useState(null);
+  const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem(MYK));
+
+  const currency = multiYear.currency || DEFAULT_CURRENCY;
+  const fmt = useMemo(() => makeFmt(currency), [currency]);
+
+  const setCurrency = useCallback(code => {
+    setMultiYear(prev => {
+      const updated = { ...prev, currency: code };
+      saveMultiYear(updated);
+      return updated;
+    });
+  }, []);
+
+  const activeYear = multiYear.activeYear;
+  const store = multiYear.years[activeYear] || DEFAULT_STORE;
+  const allYears = Object.keys(multiYear.years).map(Number).sort();
+
+  const updateStore = useCallback(updater => {
+    setMultiYear(prev => {
+      const cur = prev.years[prev.activeYear] || DEFAULT_STORE;
+      const next = typeof updater === "function" ? updater(cur) : updater;
+      const updated = { ...prev, years: { ...prev.years, [prev.activeYear]: next } };
+      saveMultiYear(updated);
+      return updated;
+    });
+  }, []);
+
+  const switchYear = useCallback(y => {
+    setMultiYear(prev => { const updated = { ...prev, activeYear: y }; saveMultiYear(updated); return updated; });
+    setMonth(0); setShowYearMgr(false);
+  }, []);
+
+  const addNewYear = useCallback(y => {
+    setMultiYear(prev => {
+      if (prev.years[y]) return { ...prev, activeYear: y };
+      const lastYear = Math.max(...Object.keys(prev.years).map(Number));
+      const newStore = makeEmptyYearStore(prev.years[lastYear] || DEFAULT_STORE);
+      const updated = { ...prev, activeYear: y, years: { ...prev.years, [y]: newStore } };
+      saveMultiYear(updated);
+      return updated;
+    });
+    setMonth(0); setShowYearMgr(false);
+  }, []);
+
+  const saveTx = useCallback(t => {
+    updateStore(s => {
+      const exists = s.transactions.find(x => x.id === t.id);
+      const txs = exists ? s.transactions.map(x => x.id === t.id ? t : x) : [...s.transactions, t];
+      return { ...s, transactions: txs };
+    });
+  }, []);
+
+  const exportJ = () => {
+    const b = new Blob([JSON.stringify(multiYear, null, 2)], { type: "application/json" });
+    const u = URL.createObjectURL(b), a = document.createElement("a");
+    a.href = u; a.download = `budget_backup_${activeYear}.json`; a.click(); URL.revokeObjectURL(u);
+  };
+  const importJ = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        if (d.years) { setMultiYear(d); saveMultiYear(d); }
+      } catch {}
+    };
+    r.readAsText(f); e.target.value = "";
+  };
+
+  const navItems = [["month", "Month"], ["year", "YTD"], ["compare", "Compare"], ["settings", "⚙ Settings"]];
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      {showWelcome && <WelcomeScreen onDismiss={() => setShowWelcome(false)} />}
+
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-40 shadow-sm">
+        <div className="px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex gap-1">
+              {navItems.map(([v, l]) => (
+                <button key={v} onClick={() => setView(v)} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${view === v ? "bg-indigo-100 text-indigo-700" : "text-gray-500"}`}>{l}</button>
+              ))}
+            </div>
+            <div className="relative">
+              <button onClick={() => setShowYearMgr(p => !p)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">
+                {activeYear} <span className="text-indigo-200 text-xs">▾</span>
+              </button>
+              {showYearMgr && (
+                <div className="absolute top-10 left-0 bg-white border border-gray-200 rounded-2xl shadow-xl p-3 z-50 min-w-48">
+                  <p className="text-xs text-gray-400 mb-2 px-1">Switch year</p>
+                  {allYears.map(y => (
+                    <button key={y} onClick={() => switchYear(y)}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-sm font-medium mb-0.5 ${y === activeYear ? "bg-indigo-100 text-indigo-700" : "text-gray-700 hover:bg-gray-50"}`}>
+                      {y} {y === activeYear && "← active"}
+                    </button>
+                  ))}
+                  <div className="border-t border-gray-100 mt-2 pt-2">
+                    <p className="text-xs text-gray-400 mb-1 px-1">Start new year</p>
+                    {[activeYear + 1, activeYear + 2].filter(y => !multiYear.years[y]).map(y => (
+                      <button key={y} onClick={() => addNewYear(y)}
+                        className="w-full text-left px-3 py-2 rounded-xl text-sm text-indigo-600 hover:bg-indigo-50 font-medium">
+                        + Add {y}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={exportJ} className="text-xs text-gray-400 border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50">Backup</button>
+            <label className="text-xs text-gray-400 border border-gray-200 rounded-lg px-2 py-1 cursor-pointer hover:bg-gray-50">
+              <span>Restore</span>
+              <input type="file" accept=".json" onChange={importJ} className="hidden" />
+            </label>
+          </div>
+        </div>
+      </header>
+
+      <main className="px-6 py-5">
+        {view === "month" && (
+          <>
+            <div className="flex items-center gap-4 mb-4">
+              <button onClick={() => setMonth(m => Math.max(0, m - 1))} className="w-9 h-9 flex items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 text-lg">{"<"}</button>
+              <button onClick={() => setShowPicker(p => !p)} className="text-base font-semibold text-gray-800 hover:text-indigo-600">{MONTHS[month]} {activeYear}</button>
+              <button onClick={() => setMonth(m => Math.min(11, m + 1))} className="w-9 h-9 flex items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 text-lg">{">"}</button>
+            </div>
+            {showPicker && (
+              <div className="grid grid-cols-6 gap-1.5 mb-4 bg-white rounded-2xl p-3 shadow-sm border border-gray-100" style={{ maxWidth: "480px" }}>
+                {MONTHS.map((m, i) => (
+                  <button key={i} onClick={() => { setMonth(i); setShowPicker(false); }} className={`py-2 text-xs rounded-xl font-medium ${month === i ? "bg-indigo-600 text-white" : "text-gray-600"}`}>{m.slice(0, 3)}</button>
+                ))}
+              </div>
+            )}
+            <MonthView mi={month} store={store} updateStore={updateStore} onEdit={t => setTxModal({ editTx: t })} activeYear={activeYear} fmt={fmt} />
+          </>
+        )}
+        {view === "year"    && <YearView    store={store} activeYear={activeYear} fmt={fmt} />}
+        {view === "compare" && <CompareView multiYear={multiYear} fmt={fmt} />}
+        {view === "settings" && (
+          <div style={{ maxWidth: "720px" }}>
+            <SettingsView store={store} updateStore={updateStore} currency={currency} setCurrency={setCurrency} />
+          </div>
+        )}
+        <div className="h-20" />
+      </main>
+
+      {view === "month" && (
+        <button onClick={() => setTxModal({ editTx: null })} className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white text-3xl rounded-full shadow-lg flex items-center justify-center z-30 hover:bg-indigo-700 transition-colors">+</button>
+      )}
+
+      {showYearMgr && <div className="fixed inset-0 z-40" onClick={() => setShowYearMgr(false)} />}
+
+      {txModal && (
+        <TxModal
+          onSave={saveTx}
+          onDelete={id => updateStore(s => ({ ...s, transactions: s.transactions.filter(t => t.id !== id) }))}
+          onClose={() => setTxModal(null)}
+          monthIdx={month}
+          editTx={txModal.editTx}
+          expCats={store.expenseCategories}
+          incCats={store.incomeCategories}
+          activeYear={activeYear}
+        />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.render(React.createElement(App), document.getElementById('root'));
+  </script>
+</body>
+</html>
