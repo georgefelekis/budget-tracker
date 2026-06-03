@@ -1,6 +1,6 @@
 # Local Finance Dashboard (No Login)
 
-![Dashboard Screenshot](screenshot.png)
+![Dashboard Screenshot](budget_tracker.png)
 
 
 
